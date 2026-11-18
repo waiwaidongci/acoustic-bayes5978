@@ -13,7 +13,8 @@ GaussianNB与分层交叉验证、混淆矩阵和后验解释。为桐弦研究�
 3. 分析配置：冻结来源、参数和全部样本，进入Redis队列。
 4. 完整结果：真实算法摘要、专属诊断、全部CSV导出和可恢复失败态。
 5. 复检批注：分析师草案→负责人批准→阅读者下载批准快照。
-6. 审计：登录、来源修改、任务worker完成、业务说明批准等事件。
+6. 拆检估算：按已完成研究的折外判读分层随机抽样，用拆检结论按入样概率倒数估算全批误判率；封账版本与更正分开留痕。
+7. 审计：登录、来源修改、任务worker完成、业务说明批准、拆检计权与发布等事件。
 
 ## 快速启动
 
@@ -57,6 +58,23 @@ AcousticBatch / AcousticSample / ClassifierRun / InspectionNote 是核心实体�
 
 实体贯穿 `backend/src/models`、`schemas`、`services`、`controllers`、`routes`，以及 `frontend/src/api/research.js`、`stores/research.js` 和 `pages`。`Source.key` 与 `(Record.source_id, reference)` 为自然键；来源改名不会修改已冻结任务输入。业务说明在创建时保存结果快照，批准后从该快照导出。
 
+拆检估算另有四张表：`teardown_plans`（计划：来源研究、冻结校验和、seed、各层全量/抽取数/入样概率/抽中名单）、`teardown_receipts`（拆检回件：样本、结论、收到时间）、`teardown_editions`（封账版本：收件截止、冻结快照、估计量）、`teardown_strata`（版本内各层对账与计权）。`(plan_id, version_no)` 与 `(edition_id, stratum_key)` 唯一；同一计划同一收件时刻不复写回件，更正请用新的收到时间。
+
+## 拆检抽样与误判率口径
+
+现场会优先拆检疑似故障件，直接用拆检样本算误判率有选择偏差，不能当全批结论。正确口径分四步，全部位于 `backend/src/services/teardown.py`：
+
+1. **按已完成研究冻结的折外判读分层。** 计划只能引用 `completed` 任务的 `result.rows`，按折外**预测**类型分层；层内无放回随机抽样，seed 固定，抽样结果与入样概率 `π_h = n_h / N_h` 在计划创建时锁定，回件录入不得改变名单。
+2. **先锁定各层抽取数和入样概率。** 允许每层不同抽取数（`sample_sizes`）或统一 `per_stratum_sample`；抽取数超出层内全量、层名不在折外判读中、全部抽取数为 0 都拒绝。每个版本按计划复制一份各层名单，后续计划变更不影响既有版本。
+3. **用拆检结论按入样概率倒数估算。** 误判指拆检结论与折外判读层不一致。层内计权误判数 `m_h / π_h`，全批误判数 `Σ_h m_h / π_h`，误判率再除以全批样本数 `N`。页面同时展示未经计权的拆检样本误判率作对照，并标注它不能直接当成全批结论。
+4. **缺回件或有零概率层时不报数。** 任一层有未回件或 `π_h = 0` 时，`reportable` 为 false，全批估计与误判率均为 `null`，接口和页面只列缺口，不给出替代数字。
+
+**封账与更正。** 封账按**收件截止时刻**取值：`received_at <= cutoff` 的最新一条回件进入本版，晚到或截止后的记录不进入本版，留给下一版。版本号递增且收件截止必须晚于上一版，避免新旧版本口径倒挂。草稿版本在再次计权时可采纳截止前的更正；已发布版本固定发布时的冻结快照，之后补录的倒签记录不会改写旧版，也不能重算或重发。
+
+**中断与重试。** 分层计权逐层覆盖写入并持久化，每层 `weighted_misjudged` 是覆盖赋值而不是累加；中断后重跑同一版本不会重复加权，必要时可把单层重置为 `pending` 再恢复，结果与一次跑完一致。
+
+**发布对账。** 发布前按本版冻结快照重算每层并逐项对账（全量、抽取数、入样概率、回件、缺件、误判、计权值）；任何一层不一致返回 409 并要求重新计权，所有层齐备才写入 `published`。页面提供“按当时拆检结论复算”只读预览，展示该版在冻结快照下的估计以及与已存计权是否一致。
+
 ## 算法与口径
 
 GaussianNB与分层交叉验证、混淆矩阵和后验解释，全部计算位于 `backend/src/services/algorithm.py`，前端不拟合模型、不生成模拟结果。输入是冻结业务观察及参数，输出summary、专属诊断、逐行计算明细、seed与输入SHA256。CSV包含全部结果行；页面仅预览前30行。参数：
@@ -82,6 +100,9 @@ GaussianNB与分层交叉验证、混淆矩阵和后验解释，全部计算位�
 6. 09:25 分析师查看专属诊断及逐行结果，并下载CSV复算。
 7. 09:30 提交“十一月业务复核意见”，负责人核对并批准。
 8. 09:40 viewer下载批准快照，查看审计中的worker完成与批准事件。
+9. 10:00 分析师按首轮研究的折外判读分层建立“十一月拆检复核”计划，锁定各层抽取数与入样概率。
+10. 11:00 现场拆检回件按收到时间录入；负责人以收件截止封账第1版，各层有缺件时页面明确“暂不报数”。
+11. 次日 09:00 补齐回件后重新计权，各层对账齐，负责人发布第2版；截止后才到的记录留给第3版。查看器可用“按当时拆检结论复算”复核旧版。
 
 ## 目录与本地开发
 
@@ -103,6 +124,6 @@ backend/migrations/001_initial.sql
 | DATABASE_URL / REDIS_URL | Compose内部连接，定义在compose的env锚点 |
 | ARTIFACT_DIR | `/artifacts`，后端worker共享 |
 
-共享枚举：`backend/src/constants/enums.py` 与 `frontend/src/constants/enums.js` 都定义 admin/analyst/viewer、queued/running/completed/failed、draft/approved。后端service检查对应字符串；README为全量值说明。共享前端组件table/status/chart/business跨总览、结果、配置与复核复用；actions hook和format utils负责交互/格式。后端errors与rate_limit是两个中间件。
+共享枚举：`backend/src/constants/enums.py` 与 `frontend/src/constants/enums.js` 都定义 admin/analyst/viewer、queued/running/completed/failed、draft/approved；拆检版本用 draft/published，各层计权用 pending/computed/blocked。后端service检查对应字符串；README为全量值说明。共享前端组件table/status/chart/business跨总览、结果、配置与复核复用；actions hook和format utils负责交互/格式。后端errors与rate_limit是两个中间件。
 
 测试及截图在批根 `test-artifacts/gb-0041/`，不混入源码。独立算法oracle、HTTP完整流程和真实Playwright浏览器流程见该目录 `TESTING.md`。License：MIT。

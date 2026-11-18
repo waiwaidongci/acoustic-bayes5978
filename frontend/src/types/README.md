@@ -1,1 +1,1 @@
-业务字段契约由constants/domain.js的fields定义，后端schemas/source.py与services/domain_validation.py验证；角色与状态由constants/enums.js定义。原生JavaScript无需TypeScript编译。
+业务字段契约由constants/domain.js的fields定义，后端schemas/source.py与services/domain_validation.py验证；角色与状态由constants/enums.js定义（含拆检版本与各层计权状态）。拆检抽样契约由后端schemas/teardown.py与services/teardown.py验证。原生JavaScript无需TypeScript编译。

@@ -99,6 +99,16 @@
     "exhibit": "展品编号",
     "prediction": "预计评分",
     "method": "计算依据",
-    "neighbor_count": "参与邻居数"
+    "neighbor_count": "参与邻居数",
+    "stratum_key": "折外判读层",
+    "population": "层内全量",
+    "sample": "锁定抽取数",
+    "inclusion_probability": "入样概率",
+    "received": "已回件",
+    "missing": "缺回件",
+    "misjudged": "样本内误判",
+    "weighted_misjudged": "计权误判数",
+    "confirmed_label": "拆检结论",
+    "received_at": "收到时间"
   }
 }
